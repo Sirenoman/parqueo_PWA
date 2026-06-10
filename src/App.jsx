@@ -1,53 +1,75 @@
 import { useEffect, useState } from 'react'
-import { obtenerTarifasActivas, calcularMonto } from './services/tarifasService'
+import { obtenerOCrearVehiculo } from './services/vehiculoService'
 import './App.css'
 
 function App() {
-  const [tarifas, setTarifas] = useState([])
-  const [error, setError] = useState(null)
+  const [prueba, setPrueba] = useState({
+    cargando: true,
+    error: null,
+    vehiculoNuevo: null,
+    vehiculoExistente: null,
+    mismaPlaca: false
+  })
 
   useEffect(() => {
-    async function cargarTarifas() {
+    async function probarObtenerOCrearVehiculo() {
       try {
-        const tarifasActivas = await obtenerTarifasActivas()
-        setTarifas(tarifasActivas)
+        const v1 = await obtenerOCrearVehiculo('ABC-123', 'auto')
+        console.log('Vehiculo:', v1)
+
+        const v2 = await obtenerOCrearVehiculo('ABC-123', 'auto')
+        console.log('Mismo vehiculo sin duplicado:', v2)
+
+        setPrueba({
+          cargando: false,
+          error: null,
+          vehiculoNuevo: v1,
+          vehiculoExistente: v2,
+          mismaPlaca: v1?.placa === v2?.placa
+        })
       } catch (err) {
-        setError(err.message)
+        setPrueba({
+          cargando: false,
+          error: err.message,
+          vehiculoNuevo: null,
+          vehiculoExistente: null,
+          mismaPlaca: false
+        })
       }
     }
 
-    cargarTarifas()
+    probarObtenerOCrearVehiculo()
   }, [])
-
-  const tarifaEstandar = tarifas.find(t => t.nombre === 'Estandar') ?? tarifas[0] ?? null
-  const resultado = tarifaEstandar
-    ? calcularMonto(
-        '2026-06-08T08:00:00Z',
-        '2026-06-08T09:30:00Z',
-        tarifaEstandar
-      )
-    : null
 
   return (
     <div>
-      <h1>Conexion con Supabase</h1>
+      <h1>Prueba obtener O Crear Vehiculo</h1>
 
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+      {prueba.cargando && <p>Ejecutando prueba...</p>}
+      {prueba.error && <p style={{ color: 'red' }}>Error: {prueba.error}</p>}
 
-      {tarifas.map(t => (
-        <p key={t.id}>
-          {t.nombre} - ${t.precio_base} / {t.duracion_fraccion} min
-        </p>
-      ))}
-
-      {resultado && (
+      {prueba.vehiculoNuevo && (
         <section>
-          <h2>Resultado del calculo</h2>
-          <p>Minutos totales: {resultado.minutosTotales} min</p>
-          <p>Bloques: {resultado.bloques} bloques</p>
-          <p>Precio por bloque: ${resultado.precioPorBloque.toFixed(2)}</p>
-          <p>Duracion del bloque: {resultado.duracionBloque} min</p>
-          <p>Monto total: ${resultado.montoTotal.toFixed(2)}</p>
+          <h2>Prueba 1: placa nueva</h2>
+          <p>Placa: {prueba.vehiculoNuevo.placa}</p>
+          <p>Tipo: {prueba.vehiculoNuevo.tipo}</p>
+          <p>Creado en: {prueba.vehiculoNuevo.created_at}</p>
+        </section>
+      )}
+
+      {prueba.vehiculoExistente && (
+        <section>
+          <h2>Prueba 2: misma placa</h2>
+          <p>Placa: {prueba.vehiculoExistente.placa}</p>
+          <p>Tipo: {prueba.vehiculoExistente.tipo}</p>
+          <p>Creado en: {prueba.vehiculoExistente.created_at}</p>
+        </section>
+      )}
+
+      {!prueba.cargando && !prueba.error && (
+        <section>
+          <h2>Comparacion</h2>
+          <p>Misma placa: {prueba.mismaPlaca ? 'Si' : 'No'}</p>
         </section>
       )}
     </div>
