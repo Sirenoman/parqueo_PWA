@@ -7,5 +7,6 @@ dbLocal.version(1).stores({
     // sync_status: false = pendiente de sincronizar y subir 
     tickets: 'id, placa, hora_entrada, hora_salida, tarifa_aplicada_id, total_pagar, estado, sync_status, created_at',
     // Para los vehiculos, no es necesario un id separado, porque la placa es unica
-    vehiculos: 'placa, tipo, sync_status, created_at'
+    vehiculos: 'placa, tipo, sync_status, created_at',
+    tarifas: 'id, nombre, precio_base, duracion_fraccion, es_activa'
 })

@@ -53,7 +53,7 @@ export function calcularMonto(horaEntrada, horaSalida, tarifa) {
     // Minimo siempre 1 bloque aunque sea 1 minuto
     const bloqueFinales = Math.max(bloques, 1)
 
-    const montolTotal = bloqueFinales * tarifa.precio_base
+    const montoTotal = bloqueFinales * tarifa.precio_base
 
     // Retorna el detalle completo para mostrarlo en pantalla
     return {
@@ -61,6 +61,6 @@ export function calcularMonto(horaEntrada, horaSalida, tarifa) {
         bloques: bloqueFinales,
         precioPorBloque: tarifa.precio_base,
         duracionBloque: tarifa.duracion_fraccion,
-        montoTotal: parseFloat(montolTotal.toFixed(2)) // redondear a 2 decimales
+        montoTotal: parseFloat(montoTotal.toFixed(2)) // redondear a 2 decimales
     }
 }
