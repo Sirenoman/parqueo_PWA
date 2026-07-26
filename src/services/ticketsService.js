@@ -46,7 +46,7 @@ export async function registrarEntrada(placa, tipoVehiculo, tarifaId) {
         tarifa_aplicada_id: tarifaId,
         total_pagar: null,
         estado: 'activo',
-        sync_status: false,
+        sync_status: 0, // IndexedDB no puede indexar booleanos
         created_at: horaEntrada
     }
 
@@ -60,8 +60,8 @@ export async function registrarEntrada(placa, tipoVehiculo, tarifaId) {
 
         if (error) throw new Error('Error al registrar ticket en Supabase: ' + error.message)
 
-        await dbLocal.tickets.update(id, { sync_status: true })
-        ticket.sync_status = true
+        await dbLocal.tickets.update(id, { sync_status: 1 })
+        ticket.sync_status = 1
     }
 
     // Para imprimir o renderizar el QR, usar ticket.id como contenido.
@@ -85,7 +85,7 @@ export async function procesarSalida(codigoQR) {
         if (error) throw new Error('Error al buscar ticket en Supabase: ' + error.message)
         ticket = data
 
-        await guardarTicketLocal({ ...ticket, sync_status: true })
+        await guardarTicketLocal({ ...ticket, sync_status: 1 })
     }
 
     if (!ticket) throw new Error('Ticket no encontrado y sin conexion disponible')
@@ -107,31 +107,28 @@ export async function procesarSalida(codigoQR) {
         hora_salida: horaSalida,
         total_pagar: calculo.montoTotal,
         estado: 'pagado',
-        sync_status: false
+        sync_status: 0
     }
 
     await dbLocal.tickets.update(ticketId, {
         hora_salida: horaSalida,
         total_pagar: calculo.montoTotal,
         estado: 'pagado',
-        sync_status: false
+        sync_status: 0
     })
 
     if (navigator.onLine) {
+        // upsert (no update): si el ticket se creo offline y aun no existe
+        // en Supabase, un update() afectaria 0 filas sin error y el ticket
+        // se perderia. upsert garantiza que la fila completa quede guardada.
         const { error } = await supabase
             .from('tickets')
-            .update({
-                hora_salida: horaSalida,
-                total_pagar: calculo.montoTotal,
-                estado: 'pagado',
-                sync_status: true
-            })
-            .eq('id', ticketId)
+            .upsert(prepararTicketParaSupabase({ ...ticketCerrado, sync_status: true }), { onConflict: 'id' })
 
         if (error) throw new Error('Error al actualizar ticket en Supabase: ' + error.message)
 
-        await dbLocal.tickets.update(ticketId, { sync_status: true })
-        ticketCerrado.sync_status = true
+        await dbLocal.tickets.update(ticketId, { sync_status: 1 })
+        ticketCerrado.sync_status = 1
     }
 
     return {

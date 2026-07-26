@@ -1,12 +1,22 @@
 import { supabase } from '../lib/supabase'
+import { dbLocal } from '../lib/localDb'
 
 // ─────────────────────────────────────────────
 // Obtener todas las tarifas activas
 // Se usa en: pantalla de Entrada al registrar
 // un vehículo, para que el operador seleccione
 // qué tarifa aplica
+//
+// Sin conexion: usa las tarifas cacheadas en
+// Dexie por cachearTarifasActivas() al arrancar
+// la app (ya vienen filtradas por es_activa,
+// no hace falta volver a filtrar localmente)
 // ─────────────────────────────────────────────
 export async function obtenerTarifasActivas() {
+    if (!navigator.onLine) {
+        return await dbLocal.tarifas.toArray()
+    }
+
     const { data, error } = await supabase
         .from('tarifas')
         .select('*')
@@ -15,6 +25,21 @@ export async function obtenerTarifasActivas() {
 
     if (error) throw new Error('Error al obtener tarifas: ' + error.message)
     return data
+}
+
+// ─────────────────────────────────────────────
+// Cachear tarifas activas en IndexedDB
+// Se llama una sola vez al arrancar la app
+// (App.jsx), para que tanto Entrada como Salida
+// tengan tarifas disponibles sin depender de
+// cual pantalla se abrio primero
+// ─────────────────────────────────────────────
+export async function cachearTarifasActivas() {
+    if (!navigator.onLine) return
+
+    const tarifas = await obtenerTarifasActivas()
+    await dbLocal.tarifas.bulkPut(tarifas)
+    return tarifas
 }
 
 // ─────────────────────────────────────────────

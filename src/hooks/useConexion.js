@@ -20,6 +20,7 @@ export function useConexion() {
             `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/`,
             {
                 method: 'HEAD',
+                headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY },
                 signal: AbortSignal.timeout(3000) // maximo 3 segundos de espera
             }
         )

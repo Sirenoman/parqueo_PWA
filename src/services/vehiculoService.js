@@ -61,8 +61,9 @@ export async function registrarVehiculo(placa, tipo = 'auto') {
 
     // Sin conexion: Guardar en IndexedDB local
     // Se sincronizara junto con el ticket cuando regrese el Wifi
-    await dbLocal.vehiculos?.put(nuevoVehiculo);
-    return nuevoVehiculo; // Devuelve el vehículo registrado localmente
+    const vehiculoLocal = { ...nuevoVehiculo, sync_status: 0 }; // IndexedDB no indexa booleanos
+    await dbLocal.vehiculos?.put(vehiculoLocal);
+    return vehiculoLocal; // Devuelve el vehículo registrado localmente
 }
 
 // ─────────────────────────────────────────────
@@ -102,18 +103,26 @@ export async function sincronizarVehiculosOffline() {
         .equals(0) // 0 = false en IndexedDB
         .toArray();
 
-    if (vehiculosPendientes.dbLocal.length === 0) return; // No hay vehículos pendientes
+    if (vehiculoPendientes.length === 0) return; // No hay vehículos pendientes
+
+    // sync_status es un campo de control local: la tabla vehiculos en
+    // Supabase no lo tiene, asi que no se debe enviar en el upsert.
+    const vehiculosParaSubir = vehiculoPendientes.map(vehiculo => ({
+        placa: vehiculo.placa,
+        tipo: vehiculo.tipo,
+        created_at: vehiculo.created_at
+    }));
 
     const { error } = await supabase
         .from('vehiculos')
-        .upsert(vehiculoPendientes, { onConflict: 'placa' }); // Evita duplicados por placa
+        .upsert(vehiculosParaSubir, { onConflict: 'placa' }); // Evita duplicados por placa
         // onConflict: 'placa' -> si la placa ya existe no falla.
         // simplemente no hace nada. Evita duplicados.
 
     if (error) throw new Error('Error al sincronizar vehículos en Supabase: ' + error.message);
 
     // Marcar como sincronizados en IndexedDB
-    const placas = vehiculosPendientes.map(v => v.placa);
+    const placas = vehiculoPendientes.map(v => v.placa);
     await dbLocal.vehiculos
         .where('placa')
         .anyOf(placas)
