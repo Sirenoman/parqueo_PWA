@@ -18,7 +18,7 @@ export default defineConfig({
         theme_color: '#7c1fd6',
         background_color: '#f3f4f6',
         display: 'standalone',
-        start_url: '/entrada',
+        start_url: '/',
         scope: '/',
         icons: [
           {
