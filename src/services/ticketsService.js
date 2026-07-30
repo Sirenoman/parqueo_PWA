@@ -3,13 +3,51 @@ import { dbLocal } from '../lib/localDb'
 import { obtenerOCrearVehiculo } from './vehiculoService'
 import { obtenerTarifaPorId, calcularMonto } from './tarifasService'
 
+const REGEX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 function extraerTicketIdDesdeQR(valorQR) {
     // Flujo actual: el QR contiene directamente el UUID del ticket.
-    if (!valorQR.startsWith('PKQ-')) return valorQR
+    // Se normaliza a minusculas: crypto.randomUUID() siempre genera en
+    // minuscula y la busqueda en Dexie es sensible a mayusculas (Postgres
+    // no lo es, pero el lookup local si).
+    if (!valorQR.startsWith('PKQ-')) return valorQR.toLowerCase()
 
     // Compatibilidad con QR antiguos: PKQ-{uuid}-{placa}-{timestamp}
     const partes = valorQR.split('-')
-    return partes.slice(1, 6).join('-')
+    return partes.slice(1, 6).join('-').toLowerCase()
+}
+
+// BUSCAR TICKET ACTIVO POR PLACA
+// Alternativa al QR: cuando el ticket se perdio o no escanea, el operador
+// digita la placa. Devuelve el ticket ACTIVO mas reciente de esa placa,
+// o null si el vehiculo no tiene ninguna visita abierta.
+export async function buscarTicketActivoPorPlaca(placa) {
+    const placaNormalizada = placa.trim().toUpperCase()
+
+    if (navigator.onLine) {
+        const { data, error } = await supabase
+            .from('tickets')
+            .select('*')
+            .eq('placa', placaNormalizada)
+            .eq('estado', 'activo')
+            .order('hora_entrada', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+        if (error) throw new Error('Error al buscar ticket por placa: ' + error.message)
+        return data
+    }
+
+    // Offline: solo se puede resolver con lo que ya esta cacheado en Dexie
+    // (tickets creados en esta tablet o consultados previamente).
+    const locales = await dbLocal.tickets
+        .where('placa')
+        .equals(placaNormalizada)
+        .toArray()
+
+    return locales
+        .filter(t => t.estado === 'activo')
+        .sort((a, b) => new Date(b.hora_entrada) - new Date(a.hora_entrada))[0] || null
 }
 
 function prepararTicketParaSupabase(ticket) {
@@ -32,7 +70,35 @@ async function guardarTicketLocal(ticket) {
 
 // REGISTRAR ENTRADA
 // Crea un ticket nuevo cuando un vehiculo ingresa al parqueo.
-export async function registrarEntrada(placa, tipoVehiculo, tarifaId) {
+//
+// opciones.permitirVisitaAbierta: por defecto se bloquea registrar una
+// entrada si la placa ya tiene una visita sin cerrar. Motivo: la salida
+// por placa cierra solo la visita mas reciente, asi que un doble registro
+// dejaria la visita vieja activa de forma permanente. El operador puede
+// forzarlo desde la UI cuando el duplicado sea intencional.
+export async function registrarEntrada(placa, tipoVehiculo, tarifaId, opciones = {}) {
+    const placaNormalizada = placa.trim().toUpperCase()
+
+    if (!opciones.permitirVisitaAbierta) {
+        // Offline esta validacion es best-effort: solo ve los tickets
+        // cacheados en esta tablet, no los de otras.
+        const visitaAbierta = await buscarTicketActivoPorPlaca(placaNormalizada)
+
+        if (visitaAbierta) {
+            const desde = new Date(visitaAbierta.hora_entrada).toLocaleString('es-SV', {
+                dateStyle: 'short',
+                timeStyle: 'short'
+            })
+            const error = new Error(
+                `La placa ${placaNormalizada} ya tiene una visita abierta desde ${desde}. ` +
+                `Procesa su salida antes de registrar una nueva entrada.`
+            )
+            error.codigo = 'VISITA_ABIERTA'
+            error.ticketAbierto = visitaAbierta
+            throw error
+        }
+    }
+
     await obtenerOCrearVehiculo(placa, tipoVehiculo)
 
     const id = crypto.randomUUID()
@@ -40,7 +106,7 @@ export async function registrarEntrada(placa, tipoVehiculo, tarifaId) {
 
     const ticket = {
         id,
-        placa: placa.trim().toUpperCase(),
+        placa: placaNormalizada,
         hora_entrada: horaEntrada,
         hora_salida: null,
         tarifa_aplicada_id: tarifaId,
@@ -68,37 +134,91 @@ export async function registrarEntrada(placa, tipoVehiculo, tarifaId) {
     return ticket
 }
 
-// PROCESAR SALIDA
-// Recibe el contenido escaneado del QR. En el flujo actual debe ser el UUID del ticket.
-export async function procesarSalida(codigoQR) {
-    const ticketId = extraerTicketIdDesdeQR(codigoQR)
+// RESOLVER TICKET PARA SALIDA (interno, solo lectura)
+// Acepta dos formas de identificar la visita:
+//  1. El contenido del QR (UUID del ticket, o formato antiguo PKQ-...)
+//  2. La placa del vehiculo, cuando el ticket se perdio o no escanea.
+//     En ese caso se toma el ticket ACTIVO mas reciente de esa placa.
+async function resolverTicketParaSalida(codigoOPlaca) {
+    const entrada = codigoOPlaca.trim()
+    const esCodigoQR = entrada.startsWith('PKQ-') || REGEX_UUID.test(entrada)
 
-    let ticket = await dbLocal.tickets.get(ticketId)
+    let ticket
 
-    if (!ticket && navigator.onLine) {
-        const { data, error } = await supabase
-            .from('tickets')
-            .select('*')
-            .eq('id', ticketId)
-            .single()
+    if (esCodigoQR) {
+        const ticketId = extraerTicketIdDesdeQR(entrada)
+        ticket = await dbLocal.tickets.get(ticketId)
 
-        if (error) throw new Error('Error al buscar ticket en Supabase: ' + error.message)
-        ticket = data
+        if (!ticket && navigator.onLine) {
+            const { data, error } = await supabase
+                .from('tickets')
+                .select('*')
+                .eq('id', ticketId)
+                .maybeSingle()
 
+            if (error) throw new Error('Error al buscar ticket en Supabase: ' + error.message)
+            ticket = data
+
+            if (ticket) await guardarTicketLocal({ ...ticket, sync_status: 1 })
+        }
+
+        if (!ticket) {
+            throw new Error(navigator.onLine
+                ? 'Ticket no encontrado'
+                : 'Ticket no encontrado y sin conexion disponible')
+        }
+    } else {
+        // Se asume que el operador digito una placa
+        ticket = await buscarTicketActivoPorPlaca(entrada)
+
+        if (!ticket) {
+            throw new Error(navigator.onLine
+                ? `No hay un ticket activo para la placa ${entrada.toUpperCase()}`
+                : `Sin conexion: no hay ticket activo cacheado para la placa ${entrada.toUpperCase()}`)
+        }
+
+        // Cachear para que el cierre y un eventual reintento offline funcionen
         await guardarTicketLocal({ ...ticket, sync_status: 1 })
     }
 
-    if (!ticket) throw new Error('Ticket no encontrado y sin conexion disponible')
     if (ticket.estado !== 'activo') throw new Error('El ticket ya ha sido cerrado')
 
-    let tarifa
+    return ticket
+}
+
+async function obtenerTarifaDelTicket(ticket) {
     if (navigator.onLine) {
-        tarifa = await obtenerTarifaPorId(ticket.tarifa_aplicada_id)
-    } else {
-        tarifa = await dbLocal.tarifas?.get(ticket.tarifa_aplicada_id)
-        if (!tarifa) throw new Error('Tarifa no disponible en modo offline')
+        return await obtenerTarifaPorId(ticket.tarifa_aplicada_id)
     }
 
+    const tarifa = await dbLocal.tarifas?.get(ticket.tarifa_aplicada_id)
+    if (!tarifa) throw new Error('Tarifa no disponible en modo offline')
+    return tarifa
+}
+
+// CONSULTAR SALIDA (solo lectura, NO cierra el ticket)
+// El conductor puede estar solo preguntando cuanto lleva acumulado sin
+// retirar el vehiculo todavia, asi que esta funcion no escribe nada:
+// ni hora_salida, ni estado, ni total. Solo simula el cobro a esta hora.
+export async function consultarSalida(codigoOPlaca) {
+    const ticket = await resolverTicketParaSalida(codigoOPlaca)
+    const tarifa = await obtenerTarifaDelTicket(ticket)
+
+    const horaConsulta = new Date().toISOString()
+    const calculo = calcularMonto(ticket.hora_entrada, horaConsulta, tarifa)
+
+    return { ticket, tarifa, calculo, horaConsulta }
+}
+
+// CERRAR SALIDA (escribe)
+// Se llama SOLO cuando el operador confirma que el conductor paga y se
+// retira. Recalcula con la hora real de cierre: entre la consulta y el
+// cobro pudo pasar tiempo suficiente para entrar a otra fraccion, y el
+// monto correcto es el del momento en que el vehiculo realmente sale.
+export async function cerrarSalida(ticket, tarifa) {
+    if (ticket.estado !== 'activo') throw new Error('El ticket ya ha sido cerrado')
+
+    const ticketId = ticket.id
     const horaSalida = new Date().toISOString()
     const calculo = calcularMonto(ticket.hora_entrada, horaSalida, tarifa)
 

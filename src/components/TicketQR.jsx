@@ -12,7 +12,7 @@ export default function TicketQR({ ticket }) {
             {/* QR centrado */}
             <div className="flex justify-center mb-3">
                 <QRCodeSVG
-                    value={ticket.codigo_qr}
+                    value={ticket.id}
                     size={180}
                     level="M"
                 />
@@ -26,6 +26,10 @@ export default function TicketQR({ ticket }) {
                 </div>
                 <div className="flex justify-between">
                     <span className="text-gray-400">Entrada</span>
+                    <span>{hora}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-gray-400">Vehiculo</span>
                     <span className="capitalize">{ticket.tipo || 'Estandar'}</span>
                 </div>
             </div>

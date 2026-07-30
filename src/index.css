@@ -112,3 +112,45 @@ code {
 }
 */
 @import "tailwindcss";
+
+/* ─────────────────────────────────────────────
+   Impresion en impresora termica
+   Al llamar window.print() se oculta toda la app
+   y solo queda visible #ticket-impresion, ajustado
+   al ancho del rollo.
+
+   ANCHO DEL ROLLO: cambiar 80mm por 58mm si la
+   impresora es de rollo angosto (ambos valores).
+   ───────────────────────────────────────────── */
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  #ticket-impresion,
+  #ticket-impresion * {
+    visibility: visible;
+  }
+
+  #ticket-impresion {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 80mm;
+    box-sizing: border-box;
+    padding: 4mm;
+    color: #000;
+    background: #fff;
+    font-family: ui-monospace, Consolas, monospace;
+    /* Fuerza negro solido: sin esto algunos navegadores
+       imprimen los tonos en gris y la impresora termica
+       los rinde manchados */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

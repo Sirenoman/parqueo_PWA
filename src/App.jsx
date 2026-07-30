@@ -1,11 +1,12 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useConexion } from './hooks/useConexion'
 import { useSync } from './hooks/useSync'
+import Menu from './pages/Menu'
 import Entrada from './pages/Entrada'
 import Salida from './pages/Salida'
+import Login from './pages/Login'
 import EstadoConexion from './components/EstadoConexion'
-import { registrarEntrada, procesarSalida } from './services/ticketsService'
 import { cachearTarifasActivas } from './services/tarifasService'
 import './App.css'
 
@@ -33,9 +34,12 @@ function App() {
       />
 
       <Routes>
-        <Route path="/" element={<Navigate to="/entrada" />} />
+        <Route path="/" element={<Menu />} />
         <Route path="/entrada" element={<Entrada />} />
         <Route path="/salida" element={<Salida />} />
+        <Route path="/login" element={<Login />} />
+        {/* Cualquier ruta desconocida regresa al menu */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>
   )

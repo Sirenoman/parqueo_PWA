@@ -1,26 +1,45 @@
-import { useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { supabase } from "../lib/supabase";
 
-export function useConexion() {
+export const ConexionContext = createContext(null)
+
+// ─────────────────────────────────────────
+// Verificación real de conectividad
+// navigator.onLine puede mentir: reporta
+// true si la tablet está conectada al router
+// pero el router no tiene internet.
+// Este ping al servidor confirma conectividad
+// real con Supabase
+//
+// Se usa desde ConexionProvider.jsx, que es el
+// unico lugar donde se instancia este estado.
+// ─────────────────────────────────────────
+export function useConexionState() {
   const [estaOnline, setEstaOnline] = useState(navigator.onLine);
   const [verificando, setVerificando] = useState(false);
   const [ultimaVerificacion, setUltimaVerificacion] = useState(null);
 
-  // ─────────────────────────────────────────
-  // Verificación real de conectividad
-  // navigator.onLine puede mentir: reporta
-  // true si la tablet está conectada al router
-  // pero el router no tiene internet.
-  // Este ping al servidor confirma conectividad
-  // real con Supabase
-  // ─────────────────────────────────────────
   const verificarConexionReal = useCallback(async () => {
     setVerificando(true)
     try {
+        // Se reutilizan url/key del cliente ya instanciado (lib/supabase.js)
+        // en vez de releer las env vars, para no duplicar la fuente de verdad.
+        //
+        // No se pinguea /rest/v1/ (raiz de PostgREST): ese endpoint devuelve
+        // el esquema OpenAPI completo y, con el nuevo sistema de API keys de
+        // Supabase, quedo reclasificado como introspeccion -> exige una
+        // secret key (sb_secret_...), rechazando siempre la publishable key
+        // con 401 "Secret API key required", sin importar los headers.
+        // /auth/v1/health es el healthcheck real de Supabase (GoTrue):
+        // no expone esquema ni depende de RLS, ideal para "hay conexion?".
         const respuesta = await fetch(
-            `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/`,
+            `${supabase.supabaseUrl}/auth/v1/health`,
             {
-                method: 'HEAD',
-                headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY },
+                method: 'GET',
+                headers: {
+                    apikey: supabase.supabaseKey,
+                    Authorization: `Bearer ${supabase.supabaseKey}`
+                },
                 signal: AbortSignal.timeout(3000) // maximo 3 segundos de espera
             }
         )
@@ -71,4 +90,12 @@ export function useConexion() {
     ultimaVerificacion, // Date: cuando fue la ultima verificacion
     verificarConexionReal // funcion: para forzar verificacion manual
   }
+}
+
+export function useConexion() {
+  const contexto = useContext(ConexionContext)
+  if (!contexto) {
+    throw new Error('useConexion debe usarse dentro de <ConexionProvider>')
+  }
+  return contexto
 }
