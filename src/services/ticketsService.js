@@ -60,8 +60,22 @@ function prepararTicketParaSupabase(ticket) {
         total_pagar: ticket.total_pagar,
         estado: ticket.estado,
         sync_status: ticket.sync_status,
-        created_at: ticket.created_at
+        created_at: ticket.created_at,
+        // Precio congelado al momento de la entrada
+        precio_aplicado: ticket.precio_aplicado,
+        duracion_fraccion_aplicada: ticket.duracion_fraccion_aplicada
     }
+}
+
+// Tarifa vigente segun conexion (para congelarla al registrar la entrada)
+async function obtenerTarifaVigente(tarifaId) {
+    if (navigator.onLine) {
+        return await obtenerTarifaPorId(tarifaId)
+    }
+
+    const tarifa = await dbLocal.tarifas?.get(tarifaId)
+    if (!tarifa) throw new Error('Tarifa no disponible en modo offline')
+    return tarifa
 }
 
 async function guardarTicketLocal(ticket) {
@@ -101,6 +115,11 @@ export async function registrarEntrada(placa, tipoVehiculo, tarifaId, opciones =
 
     await obtenerOCrearVehiculo(placa, tipoVehiculo)
 
+    // Congelar la tarifa: se guarda el precio vigente AHORA, no una simple
+    // referencia. Si el admin edita la tarifa mientras el vehiculo esta
+    // adentro, este ticket se sigue cobrando al precio que regia al entrar.
+    const tarifa = await obtenerTarifaVigente(tarifaId)
+
     const id = crypto.randomUUID()
     const horaEntrada = new Date().toISOString()
 
@@ -113,7 +132,9 @@ export async function registrarEntrada(placa, tipoVehiculo, tarifaId, opciones =
         total_pagar: null,
         estado: 'activo',
         sync_status: 0, // IndexedDB no puede indexar booleanos
-        created_at: horaEntrada
+        created_at: horaEntrada,
+        precio_aplicado: Number(tarifa.precio_base),
+        duracion_fraccion_aplicada: Number(tarifa.duracion_fraccion)
     }
 
     await guardarTicketLocal(ticket)
@@ -186,14 +207,27 @@ async function resolverTicketParaSalida(codigoOPlaca) {
     return ticket
 }
 
+// Tarifa con la que se debe cobrar ESTE ticket.
+// Prioriza el precio congelado al entrar; solo cae a la tarifa vigente
+// para tickets creados antes de la migracion de precio congelado.
 async function obtenerTarifaDelTicket(ticket) {
-    if (navigator.onLine) {
-        return await obtenerTarifaPorId(ticket.tarifa_aplicada_id)
+    const tieneprecioCongelado =
+        ticket.precio_aplicado != null &&
+        ticket.duracion_fraccion_aplicada != null
+
+    if (tieneprecioCongelado) {
+        // No hace falta consultar `tarifas`: el ticket ya trae su precio.
+        // Esto ademas hace la salida mas robusta offline.
+        return {
+            id: ticket.tarifa_aplicada_id,
+            precio_base: Number(ticket.precio_aplicado),
+            duracion_fraccion: Number(ticket.duracion_fraccion_aplicada),
+            congelada: true
+        }
     }
 
-    const tarifa = await dbLocal.tarifas?.get(ticket.tarifa_aplicada_id)
-    if (!tarifa) throw new Error('Tarifa no disponible en modo offline')
-    return tarifa
+    // Fallback: tickets anteriores a la migracion (columnas en NULL)
+    return await obtenerTarifaVigente(ticket.tarifa_aplicada_id)
 }
 
 // CONSULTAR SALIDA (solo lectura, NO cierra el ticket)
